@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from .ollama import OllamaClient
+from .ollama import ModelClient
 from .prompts import DAILY_MOTIONS_PROMPT, SYSTEM_MESSAGE
 from .store import KnowledgeStore
 
@@ -21,7 +21,7 @@ def _parse_json(raw: str) -> dict[str, Any]:
 
 def generate_daily_motions(
     store: KnowledgeStore,
-    client: OllamaClient,
+    client: ModelClient,
     profile: str,
     output_dir: Path,
     count: int = 3,

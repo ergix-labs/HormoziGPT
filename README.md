@@ -1,13 +1,13 @@
 # Ergix Operator (HormoziGPT fork)
 
-Ergix Operator turns an owned business-knowledge corpus into grounded answers and daily suggested motions. It runs locally through [Ollama](https://ollama.com/), defaults to `qwen3.5:9b`, and stores indexed knowledge on the operator's machine.
+Ergix Operator turns an owned business-knowledge corpus into grounded answers and daily suggested motions. It uses Moonshot's `kimi-k3` for reasoning, local [Ollama](https://ollama.com/) embeddings for retrieval, and stores indexed knowledge on the operator's machine.
 
 This is an Ergix Labs fork of `wombyz/HormoziGPT`. See [UPSTREAM_NOTICE.md](UPSTREAM_NOTICE.md) for provenance and licensing constraints. The app does not claim to be Alex Hormozi and is not affiliated with or endorsed by Alex Hormozi or Acquisition.com.
 
 ## What changed
 
 - OpenAI and Pinecone are no longer required.
-- Chat runs against an Ollama-hosted open-weight model.
+- Chat runs against Moonshot-hosted Kimi K3 with configurable reasoning effort.
 - Embeddings run locally with `nomic-embed-text`.
 - Markdown, text, PDF, CSV, JSON, JSONL, and HTML can be indexed in bulk.
 - Content is hashed, deduplicated, chunked, and stored in a local SQLite hybrid search index.
@@ -16,18 +16,28 @@ This is an Ergix Labs fork of `wombyz/HormoziGPT`. See [UPSTREAM_NOTICE.md](UPST
 
 ## Local setup
 
-Requires Python 3.9+ and Ollama.
+Requires Python 3.9+, Ollama, and a [Moonshot API key](https://platform.moonshot.ai/console/api-keys).
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-ollama pull qwen3.5:9b
 ollama pull nomic-embed-text
+cp .env.example .env
 ```
 
-Copy `.env.example` to `.env` if you want to override the defaults.
+On an Ergix workstation, the app automatically reads `MOONSHOT_API_KEY` from the local harness store after the Infisical row `kimi` has been synced. To use a standalone key instead, add it to `.env` (which is ignored by Git):
+
+```dotenv
+MOONSHOT_API_KEY=your_key_here
+```
+
+The default reasoning level is `high`. Set `KIMI_REASONING_EFFORT=max` for the hardest runs or `low` for faster, less expensive runs.
+
+## Data boundary
+
+Original files, embeddings, and the full SQLite index remain local. The retrieved passages needed for each answer or daily-motion run are sent to Moonshot with the prompt. Do not ingest material you are not permitted to send to Moonshot.
 
 ## Add knowledge
 
@@ -59,7 +69,7 @@ The command prints JSON and saves the same contract to `data/motions/YYYY-MM-DD.
 ```json
 {
   "date": "2026-08-25",
-  "model": "qwen3.5:9b",
+  "model": "kimi-k3",
   "motions": [
     {
       "title": "Call five qualified leads",

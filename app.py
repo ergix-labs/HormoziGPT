@@ -1,80 +1,87 @@
-import os
-import openai
+from __future__ import annotations
+
+import tempfile
+from pathlib import Path
+
 import streamlit as st
-from dotenv import load_dotenv
-from render import bot_msg_container_html_template, user_msg_container_html_template
-from utils import semantic_search
-import prompts
-import pinecone
+
+from ergix_hormozi.config import Settings
+from ergix_hormozi.daily import generate_daily_motions
+from ergix_hormozi.ingest import ingest_paths
+from ergix_hormozi.ollama import OllamaClient
+from ergix_hormozi.prompts import SYSTEM_MESSAGE, grounded_user_prompt
+from ergix_hormozi.store import KnowledgeStore
 
 
-# Set up OpenAI API key
-openai.api_key = st.secrets["OPENAI_API_KEY"]
-pinecone.init(api_key=st.secrets["PINECONE_API_KEY"], environment=st.secrets["PINECONE_ENVIRONMENT"])
-index = pinecone.Index(st.secrets["PINECONE_INDEX_NAME"])
+st.set_page_config(page_title="Ergix Operator", page_icon="↗", layout="wide")
+settings = Settings.from_env()
+store = KnowledgeStore(settings.database_path, max_vector_scan=settings.max_vector_scan)
+client = OllamaClient(settings.ollama_base_url, settings.chat_model, settings.embedding_model)
 
-st.header("HormoziGPT - By Liam Ottley")
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-# Define chat history storage
-if "history" not in st.session_state:
-    st.session_state.history = []
+st.title("Ergix Operator")
+st.caption("Grounded business motions from your own corpus, running on local open-weight models.")
 
-# Construct messages from chat history
-def construct_messages(history):
-    messages = [{"role": "system", "content": prompts.system_message}]
-    
-    for entry in history:
-        role = "user" if entry["is_user"] else "assistant"
-        messages.append({"role": role, "content": entry["message"]})
-    
-    return messages
+with st.sidebar:
+    st.subheader("Local runtime")
+    st.code(f"Chat: {settings.chat_model}\nEmbeddings: {settings.embedding_model}")
+    stats = store.stats()
+    st.metric("Sources", stats["documents"])
+    st.metric("Knowledge chunks", stats["chunks"])
 
-# Generate response to user prompt
-def generate_response():
-    st.session_state.history.append({
-        "message": st.session_state.prompt,
-        "is_user": True
-    })
+    uploads = st.file_uploader(
+        "Add knowledge",
+        type=["md", "txt", "pdf", "csv", "json", "jsonl", "html", "htm"],
+        accept_multiple_files=True,
+    )
+    if uploads and st.button("Index uploaded files", use_container_width=True):
+        with st.status("Indexing locally…", expanded=True) as status:
+            with tempfile.TemporaryDirectory(prefix="ergix-operator-") as temp_dir:
+                paths = []
+                for upload in uploads:
+                    target = Path(temp_dir) / Path(upload.name).name
+                    target.write_bytes(upload.getvalue())
+                    paths.append(target)
+                result = ingest_paths(paths, store, client.embed, settings.embedding_model)
+                st.write(result)
+                status.update(label="Knowledge indexed", state="complete")
+        st.rerun()
 
-    print(f"Query: {st.session_state.prompt}")
+    st.divider()
+    if st.button("Generate today's motions", type="primary", use_container_width=True):
+        profile = settings.business_profile_path.read_text("utf-8") if settings.business_profile_path.exists() else ""
+        with st.spinner("Finding today's highest-leverage moves…"):
+            result = generate_daily_motions(store, client, profile, settings.motions_dir)
+        st.session_state.daily_motions = result
 
-    # Perform semantic search and format results
-    search_results = semantic_search(st.session_state.prompt, index, top_k=3)
+if result := st.session_state.get("daily_motions"):
+    st.subheader(f"Suggested motions · {result['date']}")
+    columns = st.columns(len(result["motions"]))
+    for column, motion in zip(columns, result["motions"]):
+        with column:
+            st.markdown(f"### {motion['title']}")
+            st.write(motion["why_now"])
+            st.markdown(f"**Move:** {motion['action']}")
+            st.markdown(f"**Scoreboard:** {motion['metric']} — target **{motion['target']}**")
+            st.caption(f"Timebox: {motion['timebox_minutes']} minutes")
 
-    print(f"Results: {search_results}")
+st.divider()
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-    context = ""
-    for i, (title, transcript) in enumerate(search_results):
-        context += f"Snippet from: {title}\n {transcript}\n\n"
-
-    # Generate human prompt template and convert to API message format
-    query_with_context = prompts.human_template.format(query=st.session_state.prompt, context=context)
-
-    # Convert chat history to a list of messages
-    messages = construct_messages(st.session_state.history)
-    messages.append({"role": "user", "content": query_with_context})
-
-    # Run the LLMChain
-    response = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=messages)
-    print(messages)
-
-    # Parse response
-    bot_response = response["choices"][0]["message"]["content"]
-    st.session_state.history.append({
-        "message": bot_response,
-        "is_user": False
-    })
-
-# User input prompt
-user_prompt = st.text_input("Enter your prompt:",
-                            key="prompt",
-                            placeholder="e.g. 'Write me a business plan to scale my coaching business'",
-                            on_change=generate_response
-                            )
-
-# Display chat history
-for message in st.session_state.history:
-    if message["is_user"]:
-        st.write(user_msg_container_html_template.replace("$MSG", message["message"]), unsafe_allow_html=True)
-    else:
-        st.write(bot_msg_container_html_template.replace("$MSG", message["message"]), unsafe_allow_html=True)
+if query := st.chat_input("Ask about offers, leads, sales, retention, or today's bottleneck"):
+    st.session_state.messages.append({"role": "user", "content": query})
+    with st.chat_message("user"):
+        st.markdown(query)
+    with st.chat_message("assistant"):
+        with st.spinner("Searching the Ergix knowledge base…"):
+            hits = store.search(query, embedder=client.embed, top_k=6)
+            messages = [{"role": "system", "content": SYSTEM_MESSAGE}]
+            messages.extend(st.session_state.messages[-8:])
+            messages.append({"role": "user", "content": grounded_user_prompt(query, hits)})
+            answer = client.chat(messages)
+            st.markdown(answer)
+    st.session_state.messages.append({"role": "assistant", "content": answer})

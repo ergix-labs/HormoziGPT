@@ -7,7 +7,7 @@ from pathlib import Path
 from .config import Settings
 from .daily import generate_daily_motions
 from .ingest import ingest_paths
-from .ollama import OllamaClient
+from .ollama import ModelClient
 from .prompts import SYSTEM_MESSAGE, grounded_user_prompt
 from .store import KnowledgeStore
 
@@ -29,7 +29,15 @@ def main() -> None:
     args = build_parser().parse_args()
     settings = Settings.from_env()
     store = KnowledgeStore(settings.database_path, max_vector_scan=settings.max_vector_scan)
-    client = OllamaClient(settings.ollama_base_url, settings.chat_model, settings.embedding_model)
+    client = ModelClient(
+        settings.ollama_base_url,
+        settings.chat_model,
+        settings.embedding_model,
+        chat_provider=settings.chat_provider,
+        chat_base_url=settings.chat_base_url,
+        chat_api_key=settings.chat_api_key,
+        reasoning_effort=settings.reasoning_effort,
+    )
     if args.command == "ingest":
         output = ingest_paths(args.paths, store, client.embed, settings.embedding_model)
     elif args.command == "ask":

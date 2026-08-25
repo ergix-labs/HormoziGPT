@@ -1,2 +1,10 @@
+.DS_Store
 .env
-/.streamlit/secrets.toml
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.streamlit/secrets.toml
+data/*.db
+data/*.db-*
+data/motions/

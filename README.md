@@ -1,56 +1,91 @@
-# HormoziGPT
+# Ergix Operator (HormoziGPT fork)
 
-HormoziGPT is a chatbot application that simulates a conversation with Alex Hormozi. The chatbot provides valuable business advice and coaching to users, drawing from Alex's experience in customer acquisition, monetization, and scaling businesses. It also has access to transcripts of Alex's podcasts, which are used to provide context and support for the chatbot's responses.
+Ergix Operator turns an owned business-knowledge corpus into grounded answers and daily suggested motions. It runs locally through [Ollama](https://ollama.com/), defaults to `qwen3.5:9b`, and stores indexed knowledge on the operator's machine.
 
-## Features
+This is an Ergix Labs fork of `wombyz/HormoziGPT`. See [UPSTREAM_NOTICE.md](UPSTREAM_NOTICE.md) for provenance and licensing constraints. The app does not claim to be Alex Hormozi and is not affiliated with or endorsed by Alex Hormozi or Acquisition.com.
 
-- Engage in a conversation with a chatbot that emulates Alex Hormozi's communication style.
-- Receive focused, practical, and direct business advice.
-- Access relevant snippets from transcripts of Alex's podcasts to support the chatbot's responses.
-- Utilize semantic search to find relevant content from the transcripts.
+## What changed
 
-## Getting Started
+- OpenAI and Pinecone are no longer required.
+- Chat runs against an Ollama-hosted open-weight model.
+- Embeddings run locally with `nomic-embed-text`.
+- Markdown, text, PDF, CSV, JSON, JSONL, and HTML can be indexed in bulk.
+- Content is hashed, deduplicated, chunked, and stored in a local SQLite hybrid search index.
+- A stable JSON daily-motions command is ready for the Ergix Agent Harness to consume.
+- Streamlit uses native chat components rather than rendering user input as unsafe HTML.
 
-### Prerequisites
+## Local setup
 
-- Python 3.7 or higher
-- OpenAI API key
-- Pinecone API key and environment details
+Requires Python 3.9+ and Ollama.
 
-### Installation
-
-1. Clone the repository:
-```
-git clone https://github.com/your-repo-url/HormoziGPT.git
-```
-2. Change to the project directory:
-```
-cd HormoziGPT
-```
-3. Install the required dependencies:
-```
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
+ollama pull qwen3.5:9b
+ollama pull nomic-embed-text
 ```
-4. Set up the environment variables:
-- `OPENAI_API_KEY`: Your OpenAI API key
-- `PINECONE_API_KEY`: Your Pinecone API key
-- `PINECONE_ENVIRONMENT`: Your Pinecone environment details
-- `PINECONE_ENDPOINT`: Your Pinecone endpoint
 
-### Usage
+Copy `.env.example` to `.env` if you want to override the defaults.
 
-1. Run the Streamlit app:
+## Add knowledge
+
+Only ingest material Ergix owns or has permission to use.
+
+```bash
+python -m ergix_hormozi ingest /path/to/approved/transcripts /path/to/playbooks
+python -m ergix_hormozi stats
 ```
+
+Unchanged files are skipped on later runs, so the same folders can be indexed repeatedly.
+
+## Ask questions
+
+```bash
+python -m ergix_hormozi ask "What is the highest-leverage constraint in our sales motion?"
+```
+
+## Generate daily suggested motions
+
+Fill in `data/business.md`, then run:
+
+```bash
+python -m ergix_hormozi daily --count 3
+```
+
+The command prints JSON and saves the same contract to `data/motions/YYYY-MM-DD.json`:
+
+```json
+{
+  "date": "2026-08-25",
+  "model": "qwen3.5:9b",
+  "motions": [
+    {
+      "title": "Call five qualified leads",
+      "why_now": "Pipeline is the current constraint.",
+      "action": "Call the five warmest qualified leads before noon.",
+      "metric": "completed calls",
+      "target": "5",
+      "timebox_minutes": 45,
+      "source_titles": ["Ergix sales playbook"]
+    }
+  ]
+}
+```
+
+## Run the interface
+
+```bash
 streamlit run app.py
 ```
-2. Open the app in your web browser and enter your prompt to start the conversation with the chatbot.
 
-## Contributing
+## Tests
 
-Contributions are welcome! Please read the [CONTRIBUTING.md](CONTRIBUTING.md) file for details on how to contribute to the project.
+```bash
+python -m unittest discover -s tests -v
+```
 
-## Acknowledgments
+## Scaling note
 
-- Alex Hormozi for his valuable insights and business advice! (don't sue me)
-- OpenAI for their language models and embeddings.
-- Pinecone for their semantic search capabilities.
+The current local SQLite index is deliberately operationally simple. It combines FTS5 retrieval with local embedding reranking and is suitable for the first substantial corpus. When the approved corpus grows beyond a single-machine scan budget, keep the ingestion and JSON contracts and replace only `KnowledgeStore` with Qdrant or another open vector engine.
